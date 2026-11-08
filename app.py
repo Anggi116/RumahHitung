@@ -421,21 +421,69 @@ KDB, KLB, dan sempadan harus dicek ke KRK/RDTR lokasi.</p>'''
 
 
 
+
+# Gaya SVG ditulis langsung di tiap elemen supaya gambar tetap tampil walau CSS kelas tidak terbawa
+SVG_STYLE = {
+    "rh-tx": "fill:#475569;font-size:9px;font-weight:700;text-anchor:middle",
+    "rh-dim": "fill:#B85B6C;font-size:10px;font-weight:800;text-anchor:middle",
+    "rh-rm": "fill:#FDF2F4;stroke:#1E293B;stroke-width:2.5",
+    "rh-rmopen": "fill:none;stroke:#B85B6C;stroke-width:1.2;stroke-dasharray:4 3",
+    "rh-rmt": "fill:#1E293B;font-size:9.5px;font-weight:800;text-anchor:middle",
+    "rh-ar": "fill:#475569;font-size:8px;font-weight:700;text-anchor:middle",
+    "rh-ttl": "fill:#B85B6C;font-size:11px;font-weight:800",
+    "rh-dr": "fill:none;stroke:#B85B6C;stroke-width:1.2",
+    "rh-dl": "stroke:#B85B6C;stroke-width:1.6",
+    "rh-wl": "stroke:#B85B6C;stroke-width:1",
+    "rh-stp": "fill:none;stroke:#475569;stroke-width:1",
+    "rh-nv": "fill:none;stroke:#1E293B;stroke-width:1",
+    "rh-na": "fill:#1E293B",
+    "rh-dm": "stroke:#475569;stroke-width:1;fill:none",
+    "rh-land": "fill:#ffffff;stroke:#1E293B;stroke-width:2",
+    "rh-bld": "fill:none;stroke:#E08E9B;stroke-width:1.5;stroke-dasharray:5 4",
+    "rh-hs": "fill:#FDF2F4;stroke:#B85B6C;stroke-width:2",
+    "rh-road": "fill:#475569;opacity:.25",
+}
+SVG_BAD = "fill:rgba(192,57,79,.18);stroke:#c0394f"
+
+
+def inline_svg(html):
+    """Ubah class="rh-..." di dalam <svg> menjadi style langsung."""
+    def ganti_svg(m):
+        svg = m.group(0)
+
+        def ganti_tag(t):
+            tag = t.group(0)
+            c = re.search(r'class="([^"]*)"', tag)
+            if not c:
+                return tag
+            kelas = c.group(1).split()
+            gaya = [SVG_STYLE[k] for k in kelas if k in SVG_STYLE]
+            if "bad" in kelas:
+                gaya.append(SVG_BAD)
+            if not gaya:
+                return tag
+            tag = tag.replace(c.group(0), "")
+            ada = re.search(r'style="([^"]*)"', tag)
+            if ada:
+                return tag.replace(ada.group(0), 'style="' + ";".join(gaya) + ";" + ada.group(1) + '"')
+            return re.sub(r"^<(\w+)", lambda x: f'<{x.group(1)} style="{";".join(gaya)}"', tag, count=1)
+
+        return re.sub(r"<[a-zA-Z][^>]*>", ganti_tag, svg)
+
+    return re.sub(r"<svg\b.*?</svg>", ganti_svg, html, flags=re.S)
+
+
 # ------------------------------ TAMPILAN STREAMLIT ------------------------------
 st.set_page_config(page_title="Rumah Hitung", page_icon="🏠", layout="wide")
 
 
-def tampil(html):
-    """Tampilkan HTML (SVG, tabel, dll). Spasi/baris kosong dirapikan agar tidak dibaca sebagai markdown."""
-    html = re.sub(r"\s*\n\s*", " ", html)
-    if hasattr(st, "html"):
-        st.html(html)
-    else:
-        st.markdown(html, unsafe_allow_html=True)
+def tampil(html, tinggi=300):
+    """Tampilkan HTML/SVG di dalam iframe sendiri (lengkap dengan CSS) supaya gambar denah tidak hilang."""
+    dasar = "body{margin:0;background:transparent;font-family:'Nunito',system-ui,-apple-system,'Segoe UI',sans-serif}"
+    components.html(f"<style>{CSS}{dasar}</style>{inline_svg(html)}", height=tinggi, scrolling=True)
 
 
-tampil(f"<style>{CSS}</style>")
-tampil(HEADER)
+tampil(HEADER, 90)
 
 st.session_state.setdefault("P", 9.0)
 st.session_state.setdefault("L", 7.0)
@@ -485,14 +533,28 @@ with kiri:
     st.button("📐 Pakai ukuran rumah maksimal di lahan ini", on_click=_fit, use_container_width=True)
 
 with kanan:
-    viewF = st.radio("Denah lantai yang ditampilkan", [1, 2, 3], horizontal=True,
-                     format_func=lambda v: f"Lantai {v}")
-    hero, cmp_html, lahan, den, pie, mat = hitung(P, L, lantai, wil, tipe, hm, B, TW, TP, KDB, KLB, GD, GS, viewF)
-    for blok in (hero, cmp_html, lahan, den, pie, mat):
-        tampil(blok)
-    components.html(
-        '<button onclick="window.parent.print()" style="width:100%;padding:13px;border:0;border-radius:14px;'
-        'background:#B85B6C;color:#fff;font-weight:800;font-size:15px;cursor:pointer">'
-        '🖨️ Cetak / simpan PDF</button>', height=60)
+    c_hero = st.container()
+    c_cmp = st.container()
+    c_lahan = st.container()
+    c_pilih = st.container()   # pilihan lantai tepat di atas gambar denah
+    c_den = st.container()
+    c_pie = st.container()
+    c_mat = st.container()
+    c_print = st.container()
 
-tampil(NOTE)
+    with c_pilih:
+        viewF = st.radio("Denah lantai yang ditampilkan", [1, 2, 3], horizontal=True,
+                         format_func=lambda v: f"Lantai {v}")
+
+    hero, cmp_html, lahan, den, pie, mat = hitung(P, L, lantai, wil, tipe, hm, B, TW, TP, KDB, KLB, GD, GS, viewF)
+    for wadah, blok, tinggi in ((c_hero, hero, 270), (c_cmp, cmp_html, 360), (c_lahan, lahan, 780),
+                                (c_den, den, 700), (c_pie, pie, 360), (c_mat, mat, 240)):
+        with wadah:
+            tampil(blok, tinggi)
+    with c_print:
+        components.html(
+            '<button onclick="window.parent.print()" style="width:100%;padding:13px;border:0;border-radius:14px;'
+            'background:#B85B6C;color:#fff;font-weight:800;font-size:15px;cursor:pointer">'
+            '🖨️ Cetak / simpan PDF</button>', height=60)
+
+tampil(NOTE, 160)
